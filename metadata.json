@@ -1,0 +1,8 @@
+{
+  "name": "LifeLense Project",
+  "description": "An AI-powered health and lifestyle analyzer that provides instant insights from photos and questions.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}
