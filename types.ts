@@ -1,5 +1,4 @@
 
-
 export interface SmartCard {
   type: 'facts' | 'advice' | 'routine';
   title: string;
@@ -75,6 +74,8 @@ export interface ZoneInsight {
 }
 
 export interface ZoneAnalysisResult {
+  isValid: boolean;
+  errorReason?: string;
   overall_summary: string;
   zones: ZoneInsight[];
 }

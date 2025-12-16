@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { AnalysisResult, ComparisonResult, UserProfile, TreatmentPlan, ZoneAnalysisResult, SymptomData, DailyHabits, EnvironmentalFactors, TriggerAnalysisResult, EnvironmentalContext, EnvironmentalInsightsResult, ProductData, SafetyCheckResult } from "../types";
 import { normalizeImage, generateImageHash } from "./imageUtils";
@@ -121,7 +120,9 @@ const treatmentPlanSchema = {
 const zoneAnalysisSchema = {
   type: Type.OBJECT,
   properties: {
-    overall_summary: { type: Type.STRING, description: "2-3 line summary of distribution patterns, asymmetry, and potential lifestyle factors." },
+    isValid: { type: Type.BOOLEAN, description: "True if a valid, clear, front-facing face is detected. False otherwise." },
+    errorReason: { type: Type.STRING, description: "If isValid is false, explain why (e.g. 'Face not clearly visible', 'Side profile detected', 'Blurry')." },
+    overall_summary: { type: Type.STRING, description: "Summary of analysis if valid, or corrective instructions if invalid." },
     zones: {
       type: Type.ARRAY,
       items: {
@@ -142,7 +143,7 @@ const zoneAnalysisSchema = {
       }
     }
   },
-  required: ["overall_summary", "zones"]
+  required: ["isValid", "overall_summary", "zones"]
 };
 
 // Schema for Lifestyle Trigger Analysis
@@ -766,31 +767,50 @@ export const generateZoneInsights = async (
   try {
     const base64Data = base64Image.split(",")[1] || base64Image;
     
-    const prompt = `Skin Zone Mapping & Insight Generation
+    const prompt = `You are a medical-grade skin analysis assistant.
 
-    CONTEXT:
-    Existing Analysis Facts: ${existingFacts}
+CRITICAL RULES FOR SKIN ZONE MAP GENERATION:
 
-    TASK:
-    1. Detect facial zones: Forehead, Left Cheek, Right Cheek, Chin, Jawline.
-    2. Return 2D bounding boxes [ymin, xmin, ymax, xmax] for each zone (0-1000 scale).
-    3. Generate specific insights for each zone based on the image visual evidence AND existing facts.
-    
-    BEHAVIOR RULES:
-    1. Use ONLY observable data. Never invent lesions.
-    2. For each region:
-       - Provide finding (e.g., 'Scattered papules') and severity.
-       - Provide a short insight linking finding to lifestyle (e.g. 'Right cheek activity may relate to phone contact').
-       - If a zone is clear, state 'No significant findings'.
-    3. Asymmetry Detection:
-       - If significant difference between left/right cheeks, note it in the overall_summary.
-    4. Overall Summary:
-       - Provide 2-3 lines summarizing distribution pattern and any lifestyle pattern suggestions.
-    5. SAFETY:
-       - Use "may relate to", "possible correlation". No diagnosis.
-       - Always append this safety line to the overall_summary: "I am an AI assistant, not a medical professional. Please consult a doctor for medical advice."
+1. Face Detection Gate (MANDATORY)
+- Before generating any Skin Zone Map, you MUST verify that:
+  - A full or near-full human face is clearly visible
+  - Key landmarks are detectable: forehead, both cheeks, chin/jawline
+- If facial landmarks are NOT confidently detectable, DO NOT generate zone overlays.
 
-    OUTPUT: JSON matching schema.
+2. Invalid Image Conditions
+If ANY of the following are true:
+- The image primarily contains hair, scalp, hand, background, or partial face
+- The face is heavily occluded, blurred, cropped, or poorly lit
+- Facial orientation is incorrect (extreme tilt, side profile, upside down)
+- Facial features cannot be confidently segmented
+
+Then:
+- Return isValid: false
+- Return errorReason with the specific issue
+- Return empty zones array
+- Provide friendly corrective instructions in overall_summary
+
+3. Valid Face Analysis
+If a clear face IS detected:
+- Return isValid: true
+- Detect facial zones: Forehead, Left Cheek, Right Cheek, Chin, Jawline.
+- Return 2D bounding boxes [ymin, xmin, ymax, xmax] for each zone (0-1000 scale).
+- Generate specific insights using ONLY observable data.
+
+CONTEXT:
+Existing Analysis Facts: ${existingFacts}
+
+BEHAVIOR RULES (For Valid Faces):
+1. Use ONLY observable data. Never invent lesions.
+2. For each region:
+   - Provide finding (e.g., 'Scattered papules') and severity.
+   - Provide a short insight linking finding to lifestyle.
+   - If a zone is clear, state 'No significant findings'.
+3. SAFETY:
+   - Use "may relate to", "possible correlation". No diagnosis.
+   - Always append this safety line to the overall_summary: "I am an AI assistant, not a medical professional. Please consult a doctor for medical advice."
+
+OUTPUT: JSON matching schema.
     `;
 
     const response = await ai.models.generateContent({

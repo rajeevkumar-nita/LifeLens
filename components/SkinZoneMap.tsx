@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { ZoneAnalysisResult, ZoneInsight } from '../types';
 import { generateZoneInsights } from '../services/geminiService';
-import { ScanFace, Info, X, ChevronRight, AlertCircle, Loader2, ArrowRightLeft, Sparkles } from 'lucide-react';
+import { ScanFace, Info, X, ChevronRight, AlertCircle, Loader2, ArrowRightLeft, Sparkles, Camera, ShieldAlert } from 'lucide-react';
 
 interface SkinZoneMapProps {
   image: string;
@@ -39,6 +38,7 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
   if (!isOpen) return null;
 
   const selectedZone = data?.zones.find(z => z.id === selectedZoneId);
+  const isValidAnalysis = data?.isValid;
 
   // Helper to convert 0-1000 scale to percentage
   const getStyle = (box: [number, number, number, number]) => {
@@ -74,12 +74,14 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
         {/* Header */}
         <div className="p-4 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between bg-gray-50/50 dark:bg-slate-900/50 transition-colors duration-300">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl transition-colors duration-300">
+            <div className={`p-2 rounded-xl transition-colors duration-300 ${isValidAnalysis === false ? 'bg-red-50 text-red-500 dark:bg-red-900/30 dark:text-red-400' : 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400'}`}>
               <ScanFace size={20} />
             </div>
             <div>
               <h3 className="font-bold text-gray-800 dark:text-white transition-colors duration-300">Skin Zone Map</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400 transition-colors duration-300">Tap regions for lifestyle insights</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 transition-colors duration-300">
+                {isValidAnalysis === false ? "Analysis unavailable" : "Tap regions for lifestyle insights"}
+              </p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-full transition-colors text-gray-500 dark:text-gray-400">
@@ -101,7 +103,24 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
                 <AlertCircle size={32} className="mx-auto mb-2 text-red-400" />
                 <p className="text-sm">{error}</p>
               </div>
+            ) : isValidAnalysis === false ? (
+               /* INVALID IMAGE STATE - VISUAL */
+               <>
+                 <img 
+                   src={image} 
+                   alt="Face Map" 
+                   className="w-full h-full object-cover opacity-40 blur-[2px]"
+                 />
+                 <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
+                    <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4 border border-red-500/50 backdrop-blur-md">
+                       <ShieldAlert size={32} className="text-red-200" />
+                    </div>
+                    <h3 className="text-white font-bold text-lg mb-2">Zone Map Unavailable</h3>
+                    <p className="text-white/70 text-sm">{data?.errorReason || "Face not clearly visible"}</p>
+                 </div>
+               </>
             ) : (
+              /* VALID MAP STATE */
               <>
                 <img 
                   ref={imgRef}
@@ -131,8 +150,8 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
               </>
             )}
 
-            {/* Hint Overlay */}
-            {!loading && !error && !selectedZoneId && (
+            {/* Hint Overlay (Only for valid state) */}
+            {!loading && !error && isValidAnalysis !== false && !selectedZoneId && (
                <div className="absolute bottom-4 inset-x-0 text-center pointer-events-none">
                  <span className="bg-black/60 text-white text-xs px-3 py-1.5 rounded-full backdrop-blur-md">
                    Tap any highlighted zone
@@ -143,7 +162,31 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
 
           {/* Insights Panel */}
           <div className="flex-1 p-6 bg-white dark:bg-slate-800 flex flex-col min-h-[300px] transition-colors duration-300">
-            {selectedZone ? (
+            {isValidAnalysis === false ? (
+               /* INVALID IMAGE STATE - INFO PANEL */
+               <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
+                  <h4 className="text-gray-900 dark:text-white font-bold text-lg mb-4">Detection Tips</h4>
+                  
+                  <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-100 dark:border-orange-900/30 rounded-xl p-4 text-left w-full mb-6">
+                    <div className="flex gap-3">
+                       <AlertCircle size={20} className="text-orange-500 flex-shrink-0 mt-0.5" />
+                       <div className="text-sm text-orange-800 dark:text-orange-200 leading-relaxed">
+                         {data?.overall_summary || "We couldn't clearly detect a face in this image. Please try a clearer, front-facing photo."}
+                       </div>
+                    </div>
+                  </div>
+
+                  <div className="w-full text-left space-y-3">
+                     <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">For best results:</p>
+                     <ul className="text-sm text-gray-600 dark:text-gray-300 space-y-2">
+                        <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-teal-500 rounded-full" /> Use bright, even lighting</li>
+                        <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-teal-500 rounded-full" /> Face straight towards camera</li>
+                        <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-teal-500 rounded-full" /> Remove hair covering face</li>
+                        <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-teal-500 rounded-full" /> Avoid blurry or dark shots</li>
+                     </ul>
+                  </div>
+               </div>
+            ) : selectedZone ? (
               <div className="flex-1 animate-fade-in-scale">
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="text-xl font-bold text-gray-800 dark:text-white">{selectedZone.label}</h4>

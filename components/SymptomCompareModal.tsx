@@ -16,8 +16,6 @@ interface SymptomCompareModalProps {
 
 type ComparisonStep = 'upload' | 'analyzing' | 'results';
 
-const DEV_TRACKER_FIX = true;
-
 export const SymptomCompareModal: React.FC<SymptomCompareModalProps> = ({ isOpen, onClose }) => {
   const [step, setStep] = useState<ComparisonStep>('upload');
   
@@ -47,20 +45,12 @@ export const SymptomCompareModal: React.FC<SymptomCompareModalProps> = ({ isOpen
   // Auto-scroll effect
   useEffect(() => {
     if (isOpen && imageA && imageB && step === 'upload') {
-      if (DEV_TRACKER_FIX) console.log('SymptomCompare: Both images ready, scrolling to action area');
       // Small delay to allow layout render
       setTimeout(() => {
         actionAreaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }, 300);
     }
   }, [imageA, imageB, step, isOpen]);
-
-  // Debug logging
-  useEffect(() => {
-    if (DEV_TRACKER_FIX && isOpen) {
-       console.log('SymptomCompare: State', { step, hasImageA: !!imageA, hasImageB: !!imageB });
-    }
-  }, [step, imageA, imageB, isOpen]);
 
   if (!isOpen) return null;
 
@@ -89,7 +79,6 @@ export const SymptomCompareModal: React.FC<SymptomCompareModalProps> = ({ isOpen
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, slot: 'A' | 'B') => {
     const file = e.target.files?.[0];
     if (file) {
-      if (DEV_TRACKER_FIX) console.log(`SymptomCompare: File selected for slot ${slot}`);
       const reader = new FileReader();
       reader.onloadend = () => {
         if (slot === 'A') {
@@ -105,7 +94,6 @@ export const SymptomCompareModal: React.FC<SymptomCompareModalProps> = ({ isOpen
   };
 
   const handleCameraCapture = (imageData: string) => {
-    if (DEV_TRACKER_FIX) console.log(`SymptomCompare: Camera captured for slot ${activeCameraSlot}`);
     if (activeCameraSlot === 'A') {
       setImageA(imageData);
     } else if (activeCameraSlot === 'B') {

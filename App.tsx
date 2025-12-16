@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { InputSection } from './components/InputSection';
@@ -31,59 +30,62 @@ const App: React.FC = () => {
   // Theme Hook
   const { theme, toggleTheme } = useTheme();
 
-  // Session State
+  // ---------------------------------------------------------------------------
+  // GLOBAL STATE: MEDICAL PROFILE (CANONICAL DESIGN - DO NOT CHANGE)
+  // ---------------------------------------------------------------------------
+  // Rule 1: Must be initialized via LAZY INITIALIZER to be available before first render.
+  // Rule 2: Must synchronously read from localStorage.
+  // Rule 3: Must NEVER be dependent on chatId or session lifecycle.
+  // Rule 4: Do NOT use useEffect to load this.
+  // ---------------------------------------------------------------------------
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem('lifelens_profile');
+        return saved ? JSON.parse(saved) : DEFAULT_PROFILE;
+      }
+      return DEFAULT_PROFILE;
+    } catch (e) {
+      console.error("Failed to load profile", e);
+      return DEFAULT_PROFILE;
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // SESSION STATE (Chat-Scoped)
+  // ---------------------------------------------------------------------------
   const [chatId, setChatId] = useState<string>(generateChatId);
   const [currentResult, setCurrentResult] = useState<AnalysisResult | null>(null);
   const [currentImage, setCurrentImage] = useState<string | null>(null); // Store current image for zone mapping
   const [loadingState, setLoadingState] = useState<LoadingState>('idle');
   
-  // Chat-Scoped History State
+  // Chat-Scoped History & Planning
   const [history, setHistory] = useState<HistoryItem[]>(DEFAULT_HISTORY);
+  const [treatmentPlan, setTreatmentPlan] = useState<TreatmentPlan | null>(null);
   
-  const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  // Feature Toggles & UI State
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Tracker State (History-based)
   const [isTrackerOpen, setIsTrackerOpen] = useState(false);
-
-  // New Two-Image Comparison State
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
-
-  // New Chat UI State
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [isCachedToast, setIsCachedToast] = useState(false);
-
-  // Treatment Planner State
-  const [treatmentPlan, setTreatmentPlan] = useState<TreatmentPlan | null>(null);
   const [isPlannerOpen, setIsPlannerOpen] = useState(false);
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
-
-  // Trigger Prediction State
   const [activeTriggers, setActiveTriggers] = useState<string[]>([]);
   const [triggerSuggestions, setTriggerSuggestions] = useState<string | null>(null);
   const [isTriggerCardVisible, setIsTriggerCardVisible] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
-
-  // Zone Map State
   const [isZoneMapOpen, setIsZoneMapOpen] = useState(false);
 
-  // Load Global User Profile (Once on Mount)
-  useEffect(() => {
-    try {
-      const savedProfile = localStorage.getItem('lifelens_profile');
-      if (savedProfile) {
-        setUserProfile(JSON.parse(savedProfile));
-      }
-    } catch (e) {
-      console.error("Failed to load profile from local storage", e);
-    }
-  }, []);
-
+  // ---------------------------------------------------------------------------
+  // SESSION LIFECYCLE EFFECTS
+  // ---------------------------------------------------------------------------
+  
   // Load History & Planner for specific Chat ID
   useEffect(() => {
     setIsHistoryLoading(true);
@@ -139,6 +141,10 @@ const App: React.FC = () => {
     }
   }, [treatmentPlan, chatId]);
 
+  // ---------------------------------------------------------------------------
+  // HANDLERS
+  // ---------------------------------------------------------------------------
+
   // Trigger New Chat Flow
   const handleNewChatClick = () => {
     setShowNewChatModal(true);
@@ -151,7 +157,7 @@ const App: React.FC = () => {
     setTimeout(() => setShowToast(false), 3000);
   };
 
-  // Confirm New Chat: Reset everything
+  // Confirm New Chat: Reset Session Data Only
   const handleConfirmNewChat = () => {
     // 1. Clear current session storage
     const oldSessionKey = `lifelens_history_${chatId}`;
@@ -163,7 +169,8 @@ const App: React.FC = () => {
     const newChatId = generateChatId();
     setChatId(newChatId);
 
-    // 3. Reset UI State
+    // 3. Reset UI/Session State
+    // IMPORTANT: DO NOT RESET GLOBAL USER PROFILE HERE.
     setHistory([]);
     setCurrentResult(null);
     setCurrentImage(null);
@@ -183,6 +190,7 @@ const App: React.FC = () => {
     triggerToast("New chat started — ready for your first scan.");
   };
 
+  // Save Profile: Synchronous update to state and storage
   const handleSaveProfile = (profile: UserProfile) => {
     setUserProfile(profile);
     localStorage.setItem('lifelens_profile', JSON.stringify(profile));
