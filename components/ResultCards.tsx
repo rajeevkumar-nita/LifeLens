@@ -1,10 +1,9 @@
-
 import React, { useState, useMemo } from 'react';
 import { AnalysisResult, SmartCard, HistoryItem } from '../types';
 import { 
   AlertTriangle, Droplet, Utensils, Info, CheckCircle, 
   Activity, Copy, Check, Share2, ChevronDown, ChevronUp,
-  BookOpen, Lightbulb, Calendar, Pill, Stethoscope, TrendingUp, TrendingDown, Minus, ShieldCheck
+  BookOpen, Lightbulb, Calendar, Pill, Stethoscope, TrendingUp, TrendingDown, Minus, ShieldCheck, ScanFace
 } from 'lucide-react';
 
 interface ResultCardsProps {
@@ -12,6 +11,9 @@ interface ResultCardsProps {
   isLoading?: boolean;
   history?: HistoryItem[];
   onCreatePlanner?: () => void;
+  onToggleZoneMap?: () => void;
+  isZoneMapOpen?: boolean;
+  hasImages?: boolean;
 }
 
 // --- Severity Logic ---
@@ -319,7 +321,15 @@ const SkeletonCard = () => (
   </div>
 );
 
-export const ResultCards: React.FC<ResultCardsProps> = ({ result, isLoading, history = [], onCreatePlanner }) => {
+export const ResultCards: React.FC<ResultCardsProps> = ({ 
+  result, 
+  isLoading, 
+  history = [], 
+  onCreatePlanner,
+  onToggleZoneMap,
+  isZoneMapOpen,
+  hasImages
+}) => {
   const severity = useMemo(() => result ? calculateSeverity(result) : null, [result]);
 
   const trend = useMemo(() => {
@@ -411,9 +421,9 @@ export const ResultCards: React.FC<ResultCardsProps> = ({ result, isLoading, his
         ))}
       </div>
 
-      {/* Treatment Planner CTA - Only for Skin related analysis */}
-      {onCreatePlanner && (result.category === 'Skincare' || result.category === 'General') && (
-        <div className="flex justify-center pt-4">
+      <div className="flex flex-col items-center gap-4 pt-4">
+        {/* Treatment Planner CTA - Only for Skin related analysis */}
+        {onCreatePlanner && (result.category === 'Skincare' || result.category === 'General') && (
           <button 
             onClick={onCreatePlanner}
             className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-teal-500 to-emerald-500 text-white font-bold rounded-2xl shadow-lg shadow-teal-500/30 hover:shadow-teal-500/40 hover:-translate-y-0.5 transition-all active:scale-95 group"
@@ -421,8 +431,19 @@ export const ResultCards: React.FC<ResultCardsProps> = ({ result, isLoading, his
             <ShieldCheck size={20} className="group-hover:scale-110 transition-transform" />
             Create Treatment Planner
           </button>
-        </div>
-      )}
+        )}
+
+        {/* Zone Map Toggle */}
+        {onToggleZoneMap && hasImages && (result.category === 'Skincare' || result.category === 'General') && (
+          <button 
+            onClick={onToggleZoneMap}
+            className="flex items-center gap-2 px-6 py-2.5 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-full text-sm font-bold text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-200 dark:hover:border-indigo-700 shadow-sm transition-all group"
+          >
+            <ScanFace size={18} className="group-hover:scale-110 transition-transform" />
+            {isZoneMapOpen ? "Hide Zone Map" : "Show Skin Zone Map"}
+          </button>
+        )}
+      </div>
     </div>
   );
 };

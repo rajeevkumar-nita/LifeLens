@@ -1,19 +1,19 @@
-
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, X, Camera, Loader2, Activity, UploadCloud, TrendingUp, Utensils, Droplet, AlertCircle, Settings } from 'lucide-react';
+import { Mic, Square, X, Camera, Loader2, Activity, UploadCloud, TrendingUp, Utensils, Droplet, AlertCircle, Settings, Clock, Plus, Lightbulb, Sun, ScanFace } from 'lucide-react';
 import { CameraModal } from './CameraModal';
 
 interface InputSectionProps {
-  onAnalyze: (text: string, image: string | null) => void;
+  onAnalyze: (text: string, images: string[]) => void;
   isLoading: boolean;
+  cooldown?: number; // Optional cooldown in seconds
   autoFocus?: boolean;
   onOpenSymptomTracker: () => void;
 }
 
-export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading, autoFocus = false, onOpenSymptomTracker }) => {
+export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading, cooldown = 0, autoFocus = false, onOpenSymptomTracker }) => {
   const [text, setText] = useState('');
   const [inputMode, setInputMode] = useState<'General' | 'Food' | 'Skin'>('General');
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [isListening, setIsListening] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isIdle, setIsIdle] = useState(false);
@@ -107,10 +107,14 @@ export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading
   }, []);
 
   const handleImageUpload = (file: File) => {
+    if (imagePreviews.length >= 3) {
+      alert("You can upload a maximum of 3 images.");
+      return;
+    }
     if (file && (file.type === 'image/jpeg' || file.type === 'image/png')) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setImagePreview(reader.result as string);
+        setImagePreviews(prev => [...prev, reader.result as string].slice(0, 3));
       };
       reader.readAsDataURL(file);
     } else {
@@ -119,8 +123,16 @@ export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading
   };
 
   const onFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleImageUpload(file);
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      Array.from(files).forEach(file => {
+        if (file instanceof File) {
+          handleImageUpload(file);
+        }
+      });
+    }
+    // Reset input to allow re-selection of same file if needed
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -136,8 +148,14 @@ export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) handleImageUpload(file);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      Array.from(files).forEach(file => {
+        if (file instanceof File) {
+          handleImageUpload(file);
+        }
+      });
+    }
   };
 
   const handleMicClick = () => {
@@ -166,7 +184,7 @@ export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading
   };
 
   const handleSubmit = () => {
-    if (!text && !imagePreview) return;
+    if (!text && imagePreviews.length === 0) return;
     
     let promptToSend = text;
     
@@ -184,27 +202,29 @@ export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading
       }
     }
     
-    onAnalyze(promptToSend, imagePreview);
+    onAnalyze(promptToSend, imagePreviews);
   };
 
-  const clearImage = (e: React.MouseEvent) => {
+  const removeImage = (e: React.MouseEvent, index: number) => {
     e.stopPropagation();
-    setImagePreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
   };
 
   const getButtonStyles = () => {
     if (isLoading) {
       return 'bg-gradient-to-r from-teal-400 via-emerald-300 to-teal-400 animate-gradient-x text-white cursor-wait shadow-lg border-teal-200 dark:border-teal-700';
     }
-    if (!text && !imagePreview) {
+    if (cooldown > 0) {
+      return 'bg-gray-200 dark:bg-slate-700 text-gray-400 dark:text-gray-500 cursor-not-allowed border-transparent';
+    }
+    if (!text && imagePreviews.length === 0) {
       return 'bg-gray-200 dark:bg-slate-700 text-gray-400 dark:text-gray-500 cursor-not-allowed border-transparent';
     }
     return 'bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 shadow-xl shadow-teal-500/20 text-white border-transparent';
   };
 
   const handleCameraCapture = (imageData: string) => {
-    setImagePreview(imageData);
+    setImagePreviews(prev => [...prev, imageData].slice(0, 3));
   };
 
   const getPlaceholderText = () => {
@@ -212,6 +232,54 @@ export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading
     if (inputMode === 'Food') return "Describe this meal...";
     if (inputMode === 'Skin') return "Describe symptoms...";
     return "💬 Ask a health question...";
+  };
+
+  const renderGuidance = () => {
+    // Only show guidance for Skin or General health queries
+    if (inputMode === 'Food') return null;
+    if (imagePreviews.length >= 3) return null;
+
+    return (
+      <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-900/30 rounded-2xl p-4 animate-fade-in mx-1">
+        <div className="flex items-start gap-3">
+          <div className="bg-indigo-100 dark:bg-indigo-900/50 p-2 rounded-xl text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5">
+            {inputMode === 'Skin' ? <ScanFace size={18} /> : <Lightbulb size={18} />}
+          </div>
+          <div className="flex-1">
+            <h4 className="text-sm font-bold text-indigo-900 dark:text-indigo-200 mb-1">
+              {imagePreviews.length === 0 ? "Photo Tips for Best Results" : "Add more detail?"}
+            </h4>
+            
+            <div className="text-xs text-indigo-800 dark:text-indigo-300 leading-relaxed space-y-1">
+               {imagePreviews.length === 0 && (
+                 <>
+                   <p className="font-medium">You can add up to 3 photos for better clarity.</p>
+                   {inputMode === 'Skin' ? (
+                     <p className="opacity-90">Try capturing: <b>1. Front view</b> &bull; <b>2. Side angle</b> &bull; <b>3. Close-up</b></p>
+                   ) : (
+                     <p className="opacity-90">Clear, well-lit photos help the AI analyze symptoms more accurately.</p>
+                   )}
+                 </>
+               )}
+               {imagePreviews.length === 1 && (
+                 <p>Great start. Multiple angles may help improve analysis accuracy. Try adding a side view or close-up.</p>
+               )}
+               {imagePreviews.length === 2 && (
+                 <p>Almost done. You can add one last photo (like a close-up or different angle) if needed.</p>
+               )}
+            </div>
+
+            {imagePreviews.length === 0 && (
+              <div className="flex items-center gap-3 mt-2.5 pt-2 border-t border-indigo-100 dark:border-indigo-900/30 text-[10px] font-bold text-indigo-500 dark:text-indigo-400 uppercase tracking-wide">
+                 <span className="flex items-center gap-1"><Sun size={10} /> Natural Light</span>
+                 <span className="flex items-center gap-1"><Camera size={10} /> No Filters</span>
+                 <span className="flex items-center gap-1"><Activity size={10} /> Steady Cam</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -266,18 +334,48 @@ export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading
           </div>
         </div>
         
+        {/* Assistive Image Guidance */}
+        {renderGuidance()}
+        
         {/* Image Input Area */}
-        {imagePreview ? (
-          <div className="relative w-full h-64 bg-gray-50 dark:bg-slate-900 rounded-3xl overflow-hidden border border-gray-100 dark:border-slate-700 group shadow-inner">
-            <img src={imagePreview} alt="Upload preview" className="w-full h-full object-contain" />
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors" />
-            <button 
-              onClick={clearImage}
-              className="absolute top-3 right-3 p-2 bg-white/90 dark:bg-slate-800/90 text-gray-600 dark:text-gray-300 rounded-full hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/50 transition-all shadow-sm backdrop-blur-sm"
-              title="Remove image"
-            >
-              <X size={18} />
-            </button>
+        {imagePreviews.length > 0 ? (
+          <div className="relative w-full h-64 bg-gray-50 dark:bg-slate-900 rounded-3xl overflow-hidden border border-gray-100 dark:border-slate-700 group shadow-inner flex">
+             <div className={`w-full h-full grid gap-1 p-1 ${imagePreviews.length === 1 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                {imagePreviews.map((preview, idx) => (
+                  <div key={idx} className="relative w-full h-full rounded-2xl overflow-hidden bg-black/5 dark:bg-black/20 group/img">
+                    <img src={preview} alt={`Upload ${idx+1}`} className="w-full h-full object-cover" />
+                    <button 
+                       onClick={(e) => removeImage(e, idx)}
+                       className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-red-500 transition-colors opacity-0 group-hover/img:opacity-100 backdrop-blur-sm"
+                       title="Remove image"
+                    >
+                       <X size={14} />
+                    </button>
+                  </div>
+                ))}
+                
+                {imagePreviews.length < 3 && (
+                   <div className="flex flex-col items-center justify-center gap-3 bg-white dark:bg-slate-800 border-2 border-dashed border-gray-200 dark:border-slate-600 rounded-2xl transition-colors group/add">
+                      <span className="text-xs font-bold text-gray-400 dark:text-gray-500">Add Image</span>
+                      <div className="flex gap-2 sm:gap-3">
+                        <button 
+                          onClick={() => setIsCameraOpen(true)}
+                          className="p-3 bg-gray-100 dark:bg-slate-700 rounded-xl hover:bg-teal-50 dark:hover:bg-teal-900/30 text-gray-400 hover:text-teal-500 transition-colors"
+                          title="Capture"
+                        >
+                          <Camera size={20} />
+                        </button>
+                        <button 
+                          onClick={() => fileInputRef.current?.click()}
+                          className="p-3 bg-gray-100 dark:bg-slate-700 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-400 hover:text-blue-500 transition-colors"
+                          title="Upload"
+                        >
+                          <UploadCloud size={20} />
+                        </button>
+                      </div>
+                   </div>
+                )}
+             </div>
           </div>
         ) : (
           <div 
@@ -314,10 +412,10 @@ export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading
 
             <div className="text-center">
               <span className="text-xs text-teal-400 font-medium block mb-1">
-                {isDragging ? 'Drop image now!' : 'Or drag and drop image here'}
+                {isDragging ? 'Drop images now!' : 'Or drag and drop images here'}
               </span>
               <span className="text-[10px] text-gray-400 dark:text-gray-500 font-medium">
-                JPG, PNG supported
+                JPG, PNG supported (Max 3)
               </span>
             </div>
           </div>
@@ -330,6 +428,7 @@ export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading
           ref={fileInputRef} 
           className="hidden" 
           accept="image/png, image/jpeg, image/jpg" 
+          multiple // Enable multiple selection
           onChange={onFileInputChange}
         />
 
@@ -387,16 +486,22 @@ export const InputSection: React.FC<InputSectionProps> = ({ onAnalyze, isLoading
         <div className="flex flex-col sm:flex-row gap-3">
           <button
             onClick={handleSubmit}
-            disabled={isLoading || (!text && !imagePreview)}
-            className={`flex-1 py-4 rounded-2xl flex items-center justify-center gap-2 font-bold text-lg tracking-wide transition-all transform active:scale-[0.98] border
+            disabled={isLoading || cooldown > 0 || (!text && imagePreviews.length === 0)}
+            className={`flex-1 py-4 rounded-2xl flex items-center justify-center gap-2 font-bold text-lg tracking-wide transition-all transform border
               ${getButtonStyles()}
-              ${!isLoading && text && isIdle ? 'animate-bounce-subtle' : ''}
+              ${!isLoading && !cooldown && text && isIdle ? 'animate-bounce-subtle' : ''}
+              ${!isLoading && !cooldown ? 'active:scale-[0.98]' : ''}
               `}
           >
             {isLoading ? (
               <>
                 <Loader2 className="animate-spin" size={24} />
                 Analyzing...
+              </>
+            ) : cooldown > 0 ? (
+              <>
+                <Clock size={24} className="animate-pulse" />
+                Wait {cooldown}s...
               </>
             ) : (
               <>

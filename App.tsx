@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { InputSection } from './components/InputSection';
 import { ResultCards } from './components/ResultCards';
@@ -23,6 +23,10 @@ const DEFAULT_PROFILE: UserProfile = {
   history: ''
 };
 
+// Rate Limit Constants
+const COOLDOWN_DURATION = 30000; // 30 seconds standard
+const QUOTA_ERROR_DURATION = 60000; // 60 seconds for 429s
+
 // Helper to generate a unique session ID
 const generateChatId = () => `lifelens_chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -32,11 +36,6 @@ const App: React.FC = () => {
 
   // ---------------------------------------------------------------------------
   // GLOBAL STATE: MEDICAL PROFILE (CANONICAL DESIGN - DO NOT CHANGE)
-  // ---------------------------------------------------------------------------
-  // Rule 1: Must be initialized via LAZY INITIALIZER to be available before first render.
-  // Rule 2: Must synchronously read from localStorage.
-  // Rule 3: Must NEVER be dependent on chatId or session lifecycle.
-  // Rule 4: Do NOT use useEffect to load this.
   // ---------------------------------------------------------------------------
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     try {
@@ -56,9 +55,13 @@ const App: React.FC = () => {
   // ---------------------------------------------------------------------------
   const [chatId, setChatId] = useState<string>(generateChatId);
   const [currentResult, setCurrentResult] = useState<AnalysisResult | null>(null);
-  const [currentImage, setCurrentImage] = useState<string | null>(null); // Store current image for zone mapping
+  const [currentImages, setCurrentImages] = useState<string[]>([]); // New: Store array of images
   const [loadingState, setLoadingState] = useState<LoadingState>('idle');
   
+  // Rate Limiting State
+  const [cooldownSeconds, setCooldownSeconds] = useState<number>(0);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Chat-Scoped History & Planning
   const [history, setHistory] = useState<HistoryItem[]>(DEFAULT_HISTORY);
   const [treatmentPlan, setTreatmentPlan] = useState<TreatmentPlan | null>(null);
@@ -81,6 +84,39 @@ const App: React.FC = () => {
   const [isTriggerCardVisible, setIsTriggerCardVisible] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
   const [isZoneMapOpen, setIsZoneMapOpen] = useState(false);
+
+  // ---------------------------------------------------------------------------
+  // RATE LIMITING LOGIC
+  // ---------------------------------------------------------------------------
+  
+  // Initialize cooldown from localStorage on mount
+  useEffect(() => {
+    const cooldownUntil = localStorage.getItem('lifelens_cooldown_until');
+    if (cooldownUntil) {
+      const remaining = Math.ceil((parseInt(cooldownUntil) - Date.now()) / 1000);
+      if (remaining > 0) {
+        setCooldownSeconds(remaining);
+      }
+    }
+  }, []);
+
+  // Cooldown Timer Effect
+  useEffect(() => {
+    if (cooldownSeconds > 0) {
+      cooldownTimerRef.current = setTimeout(() => {
+        setCooldownSeconds(prev => prev - 1);
+      }, 1000);
+    }
+    return () => {
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+    };
+  }, [cooldownSeconds]);
+
+  const startCooldown = (durationMs: number) => {
+    const until = Date.now() + durationMs;
+    localStorage.setItem('lifelens_cooldown_until', until.toString());
+    setCooldownSeconds(Math.ceil(durationMs / 1000));
+  };
 
   // ---------------------------------------------------------------------------
   // SESSION LIFECYCLE EFFECTS
@@ -173,7 +209,7 @@ const App: React.FC = () => {
     // IMPORTANT: DO NOT RESET GLOBAL USER PROFILE HERE.
     setHistory([]);
     setCurrentResult(null);
-    setCurrentImage(null);
+    setCurrentImages([]);
     setTreatmentPlan(null);
     setActiveTriggers([]);
     setTriggerSuggestions(null);
@@ -196,18 +232,36 @@ const App: React.FC = () => {
     localStorage.setItem('lifelens_profile', JSON.stringify(profile));
   };
 
-  const handleAnalyze = async (text: string, image: string | null) => {
+  const handleAnalyze = async (text: string, images: string[]) => {
+    // 1. GLOBAL REQUEST LOCK & RATE LIMIT CHECK
+    if (loadingState === 'analyzing') return;
+    
+    if (cooldownSeconds > 0) {
+      setError(`AI is temporarily busy. Please try again in ${cooldownSeconds}s.`);
+      return;
+    }
+    
+    if (!text && images.length === 0) {
+       setError("Please provide text or an image to analyze.");
+       return;
+    }
+
+    // Start Lock
     setLoadingState('analyzing');
     setError(null);
     setCurrentResult(null);
-    setCurrentImage(image);
+    setCurrentImages(images);
     setActiveTriggers([]); // Reset triggers on new analysis
     setTriggerSuggestions(null);
     setIsTriggerCardVisible(false);
     setIsZoneMapOpen(false);
 
     try {
-      const result = await analyzeHealthQuery(text, image || undefined, userProfile);
+      // 2. Start Cooldown (Optimistic rate limiting)
+      startCooldown(COOLDOWN_DURATION);
+
+      // Pass array of images to service
+      const result = await analyzeHealthQuery(text, images, userProfile);
       
       setCurrentResult(result);
       setLoadingState('success');
@@ -233,25 +287,40 @@ const App: React.FC = () => {
       const newHistoryItem: HistoryItem = {
         id: Date.now().toString(),
         timestamp: Date.now(),
-        imageUrl: image || undefined,
-        query: text || (image ? 'Image Analysis' : 'Query'),
+        imageUrl: images.length > 0 ? images[0] : undefined, // Keep primary image for backward compatibility
+        imageUrls: images, // Store all images
+        query: text || (images.length > 0 ? 'Image Analysis' : 'Query'),
         result: result,
       };
 
       setHistory(prev => [newHistoryItem, ...prev]); 
       
     } catch (err: any) {
+      // 3. HTTP 429 & ERROR HANDLING
       console.error(err);
       
-      let errorMessage = "Failed to analyze. Please try again.";
+      let errorMessage = "AI is temporarily unavailable due to high usage. Please wait a moment and try again.";
+      let isQuotaError = false;
+
       if (err instanceof Error || (typeof err === 'object' && err !== null && 'message' in err)) {
         const msg = (err.message || '').toLowerCase();
-        if (msg.includes('fetch failed') || msg.includes('network')) {
+        
+        // Detect Quota/Rate Limit Errors
+        if (msg.includes('429') || msg.includes('resource exhausted') || msg.includes('quota') || msg.includes('503')) {
+          errorMessage = "Daily AI limit reached. Please try again in a few seconds.";
+          isQuotaError = true;
+        } else if (msg.includes('fetch failed') || msg.includes('network')) {
           errorMessage = "Network error. Please check your internet connection.";
         } else if (msg.includes('safety') || msg.includes('blocked')) {
           errorMessage = "Request blocked by safety filters. Please try a different image or prompt.";
         }
       }
+
+      // Apply stricter cooldown for quota errors
+      if (isQuotaError) {
+        startCooldown(QUOTA_ERROR_DURATION);
+      }
+
       setError(errorMessage);
       setLoadingState('error');
     }
@@ -259,9 +328,14 @@ const App: React.FC = () => {
 
   const handleCreatePlanner = async () => {
     if (!currentResult) return;
+    if (cooldownSeconds > 0) {
+      triggerToast(`Please wait ${cooldownSeconds}s before creating a plan.`);
+      return;
+    }
     
     setIsGeneratingPlan(true);
     try {
+      startCooldown(COOLDOWN_DURATION);
       // Pass activeTriggers to planner generation
       const plan = await generateTreatmentPlan(currentResult, userProfile, activeTriggers);
       setTreatmentPlan(plan);
@@ -276,9 +350,14 @@ const App: React.FC = () => {
 
   const handleRefineAnalysis = async () => {
     if (!currentResult || activeTriggers.length === 0) return;
+    if (cooldownSeconds > 0) {
+      triggerToast(`Please wait ${cooldownSeconds}s before refining.`);
+      return;
+    }
     
     setIsRefining(true);
     try {
+      startCooldown(COOLDOWN_DURATION);
       // 1. Refine the advice cards (JSON structure)
       const refinedResult = await refineAnalysisWithTriggers(currentResult, activeTriggers, userProfile);
       setCurrentResult(refinedResult);
@@ -305,7 +384,10 @@ const App: React.FC = () => {
 
   const handleSelectHistory = (item: HistoryItem) => {
     setCurrentResult(item.result);
-    setCurrentImage(item.imageUrl || null);
+    // Use stored images array if available, otherwise fallback to single image
+    const images = item.imageUrls || (item.imageUrl ? [item.imageUrl] : []);
+    setCurrentImages(images);
+    
     // When selecting history, we reset triggers unless we stored them in history (which we didn't implement fully for history items yet, only per-chat session state)
     setActiveTriggers([]);
     setTriggerSuggestions(null);
@@ -397,6 +479,7 @@ const App: React.FC = () => {
             key={chatId} 
             onAnalyze={handleAnalyze} 
             isLoading={loadingState === 'analyzing'} 
+            cooldown={cooldownSeconds}
             autoFocus={true}
             onOpenSymptomTracker={() => setIsCompareModalOpen(true)}
           />
@@ -413,25 +496,15 @@ const App: React.FC = () => {
             isLoading={loadingState === 'analyzing'} 
             history={history}
             onCreatePlanner={handleCreatePlanner}
+            onToggleZoneMap={() => setIsZoneMapOpen(!isZoneMapOpen)}
+            isZoneMapOpen={isZoneMapOpen}
+            hasImages={currentImages.length > 0}
           />
 
-          {/* Skin Zone Map Toggle (Only for Skincare) */}
-          {currentResult && currentImage && (currentResult.category === 'Skincare' || currentResult.category === 'General') && (
-            <div className="w-full max-w-3xl flex justify-center -mt-4 mb-2 animate-fade-in">
-              <button 
-                onClick={() => setIsZoneMapOpen(!isZoneMapOpen)}
-                className="flex items-center gap-2 px-6 py-2.5 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-full text-sm font-bold text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-200 dark:hover:border-indigo-700 shadow-sm transition-all group"
-              >
-                <ScanFace size={18} className="group-hover:scale-110 transition-transform" />
-                {isZoneMapOpen ? "Hide Zone Map" : "Show Skin Zone Map"}
-              </button>
-            </div>
-          )}
-
-          {/* Skin Zone Map Component */}
-          {currentResult && currentImage && (
+          {/* Skin Zone Map Component - Uses primary image */}
+          {currentResult && currentImages.length > 0 && (
              <SkinZoneMap 
-               image={currentImage}
+               images={currentImages} // Pass all images
                facts={currentResult.cards.find(c => c.type === 'facts')?.content || ''}
                isOpen={isZoneMapOpen}
                onClose={() => setIsZoneMapOpen(false)}

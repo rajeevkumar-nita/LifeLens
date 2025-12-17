@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   X, UploadCloud, Camera, RefreshCw, ArrowRight, AlertTriangle, 
@@ -112,8 +111,8 @@ export const SymptomCompareModal: React.FC<SymptomCompareModalProps> = ({ isOpen
     try {
       // 4a. Run model Analyze on each image individually AND the comparison
       const [resA, resB, compRes] = await Promise.all([
-        analyzeHealthQuery("Analyze this image for symptom severity and key visible characteristics.", imageA, { conditions: '', allergies: '', history: '' }),
-        analyzeHealthQuery("Analyze this image for symptom severity and key visible characteristics.", imageB, { conditions: '', allergies: '', history: '' }),
+        analyzeHealthQuery("Analyze this image for symptom severity and key visible characteristics.", [imageA], { conditions: '', allergies: '', history: '' }),
+        analyzeHealthQuery("Analyze this image for symptom severity and key visible characteristics.", [imageB], { conditions: '', allergies: '', history: '' }),
         compareSkinAnalysis(imageA, imageB)
       ]);
 

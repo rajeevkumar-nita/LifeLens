@@ -1,44 +1,196 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ZoneAnalysisResult, ZoneInsight } from '../types';
 import { generateZoneInsights } from '../services/geminiService';
-import { ScanFace, Info, X, ChevronRight, AlertCircle, Loader2, ArrowRightLeft, Sparkles, Camera, ShieldAlert } from 'lucide-react';
+import { normalizeImage } from '../services/imageUtils';
+import { ScanFace, Info, X, ChevronRight, AlertCircle, Loader2, ArrowRightLeft, Sparkles, Camera, ShieldAlert, Image as ImageIcon } from 'lucide-react';
 
 interface SkinZoneMapProps {
-  image: string;
+  images: string[];
   facts: string;
   isOpen: boolean;
   onClose: () => void;
 }
 
-export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, onClose }) => {
-  const [data, setData] = useState<ZoneAnalysisResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ images, facts, isOpen, onClose }) => {
+  // State for multi-image management
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [resultsMap, setResultsMap] = useState<Record<number, ZoneAnalysisResult>>({});
+  const [loadingMap, setLoadingMap] = useState<Record<number, boolean>>({});
+  const [errorMap, setErrorMap] = useState<Record<number, string | null>>({});
+  
+  // Smart Selection State
+  const [hasAutoSelected, setHasAutoSelected] = useState(false);
+  const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
+
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   
-  const imgRef = useRef<HTMLImageElement>(null);
+  // Layout / Aspect Ratio State
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [imageAspectRatio, setImageAspectRatio] = useState<number | null>(null); // width / height
+  const [containerAspectRatio, setContainerAspectRatio] = useState<number>(1);
 
-  // Fetch zone data when opened
+  // Reset state when images change
   useEffect(() => {
-    if (isOpen && !data && !loading) {
-      setLoading(true);
-      generateZoneInsights(image, facts)
-        .then(res => {
-          setData(res);
-          setLoading(false);
-        })
-        .catch(err => {
-          console.error(err);
-          setError("Could not map skin zones. Ensure face is clearly visible.");
-          setLoading(false);
+    setSelectedIndex(0);
+    setResultsMap({});
+    setLoadingMap({});
+    setErrorMap({});
+    setHasAutoSelected(false);
+    setIsAnalyzingAll(false);
+    setSelectedZoneId(null);
+  }, [images]);
+
+  // Measure container on mount/resize
+  useEffect(() => {
+    const updateContainerRatio = () => {
+      if (containerRef.current) {
+        const { width, height } = containerRef.current.getBoundingClientRect();
+        if (width && height) {
+          setContainerAspectRatio(width / height);
+        }
+      }
+    };
+    
+    updateContainerRatio();
+    window.addEventListener('resize', updateContainerRatio);
+    return () => window.removeEventListener('resize', updateContainerRatio);
+  }, [isOpen]);
+
+  // SMART ANALYSIS & SELECTION LOGIC
+  useEffect(() => {
+    if (isOpen && !hasAutoSelected && !isAnalyzingAll) {
+      const missingIndices = images.map((_, i) => i).filter(i => !resultsMap[i] && !loadingMap[i]);
+      
+      if (missingIndices.length > 0) {
+        setIsAnalyzingAll(true);
+        // Mark all as loading initially
+        setLoadingMap(prev => {
+           const next = { ...prev };
+           missingIndices.forEach(i => next[i] = true);
+           return next;
         });
+
+        // Parallel fetch for all missing images
+        Promise.all(missingIndices.map(async i => {
+          try {
+            // CRITICAL FIX: Normalize image before sending to API.
+            // This ensures:
+            // 1. Image is fully loaded (onload event fired)
+            // 2. Natural dimensions are available
+            // 3. Payload size is manageable for localhost (resized to 1024px)
+            const normalizedImage = await normalizeImage(images[i]);
+            
+            if (process.env.NODE_ENV === 'development') {
+              console.debug(`[SkinZoneMap] Image ${i} normalized. Starting analysis...`);
+            }
+
+            const res = await generateZoneInsights(normalizedImage, facts);
+            return { i, res, err: null };
+          } catch (err) {
+            console.error(`[SkinZoneMap] Analysis failed for image ${i}:`, err);
+            return { i, res: null, err: "Could not map skin zones." };
+          }
+        })).then(outcomes => {
+           // Batch update results
+           setResultsMap(prev => {
+              const nextRes = { ...prev };
+              outcomes.forEach(o => { if (o.res) nextRes[o.i] = o.res; });
+              return nextRes;
+           });
+           setErrorMap(prev => {
+              const nextErr = { ...prev };
+              outcomes.forEach(o => { if (o.err) nextErr[o.i] = o.err; });
+              return nextErr;
+           });
+           setLoadingMap(prev => {
+              const nextLoad = { ...prev };
+              missingIndices.forEach(i => nextLoad[i] = false);
+              return nextLoad;
+           });
+           setIsAnalyzingAll(false);
+           setHasAutoSelected(true);
+        });
+      } else {
+        // If data already exists (e.g. re-opened), just mark auto-select complete
+        setHasAutoSelected(true);
+      }
     }
-  }, [isOpen, image, facts]);
+  }, [isOpen, images, facts, hasAutoSelected, isAnalyzingAll, resultsMap, loadingMap]);
+
+  // AUTO-SELECT BEST IMAGE AFTER ANALYSIS
+  useEffect(() => {
+    // Only run this once right after auto-selection becomes true
+    if (hasAutoSelected && !isAnalyzingAll) {
+       // Calculate scores for all available results
+       const scores = images.map((_, i) => {
+          const res = resultsMap[i];
+          // Invalid or missing results get -1
+          if (!res || !res.isValid) return -1;
+          // Calculate severity score: High=3, Med=2, Low=1
+          return res.zones.reduce((acc, z) => {
+             const weight = z.severity === 'High' ? 3 : z.severity === 'Medium' ? 2 : 1;
+             return acc + weight;
+          }, 0);
+       });
+
+       const maxScore = Math.max(...scores);
+       // Only auto-switch if we found a valid image with findings (score > 0)
+       // OR if the currently selected index (0) is invalid (-1) but another one is valid.
+       if (maxScore > 0) {
+         const bestIndex = scores.indexOf(maxScore);
+         setSelectedIndex(bestIndex);
+       } else {
+         // Fallback: if all are valid but score 0, stay 0.
+         // If 0 is invalid (-1) and 1 is valid (score 0), switch to 1.
+         const firstValidIndex = scores.findIndex(s => s > -1);
+         if (firstValidIndex !== -1) {
+            setSelectedIndex(firstValidIndex);
+         }
+       }
+    }
+    // Dependency array intentionally omits 'selectedIndex' to prevent loops.
+    // We only want this to run when the analysis batch finishes.
+  }, [hasAutoSelected, isAnalyzingAll, images, resultsMap]);
+
+  // Derived State for Rendering
+  const currentImage = images[selectedIndex];
+  const currentData = resultsMap[selectedIndex];
+  // While analyzing all, we consider the current view "loading" to prevent UI flicker
+  const isLoading = loadingMap[selectedIndex] || isAnalyzingAll; 
+  const error = errorMap[selectedIndex];
+  const isValidAnalysis = currentData?.isValid;
+
+  // Determine which tabs to show (Relevant Indices)
+  const relevantIndices = useMemo(() => {
+    if (!hasAutoSelected) return []; // Don't show tabs while initial loading
+    
+    // Map indices to scores
+    const indicesWithScores = images.map((_, i) => {
+       const res = resultsMap[i];
+       if (!res || !res.isValid) return { i, score: -1 };
+       const score = res.zones.reduce((acc, z) => acc + (z.severity === 'High' ? 3 : z.severity === 'Medium' ? 2 : 1), 0);
+       return { i, score };
+    });
+
+    // Filter: Include if score > 0 (has findings) OR if it is the currently selected one
+    const valid = indicesWithScores.filter(item => item.score > 0);
+    
+    // If no images have findings, fallback to just showing the valid ones (score 0)
+    if (valid.length === 0) {
+       return indicesWithScores.filter(item => item.score > -1).map(item => item.i);
+    }
+    
+    return valid.map(item => item.i);
+  }, [images, resultsMap, hasAutoSelected]);
+
+  // Reset selected zone when switching images
+  useEffect(() => {
+    setSelectedZoneId(null);
+  }, [selectedIndex]);
 
   if (!isOpen) return null;
 
-  const selectedZone = data?.zones.find(z => z.id === selectedZoneId);
-  const isValidAnalysis = data?.isValid;
+  const selectedZone = currentData?.zones.find(z => z.id === selectedZoneId);
 
   // Helper to convert 0-1000 scale to percentage
   const getStyle = (box: [number, number, number, number]) => {
@@ -67,6 +219,27 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
     }
   };
 
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const { naturalWidth, naturalHeight } = e.currentTarget;
+    if (naturalWidth && naturalHeight) {
+      setImageAspectRatio(naturalWidth / naturalHeight);
+    }
+  };
+
+  // Determine wrapper dimensions style to fit image inside container (object-contain behavior)
+  const getWrapperStyle = () => {
+    if (!imageAspectRatio) return { width: '100%', height: '100%' };
+    
+    // If image is wider relative to container => constrain width
+    if (imageAspectRatio > containerAspectRatio) {
+      return { width: '100%', height: 'auto', aspectRatio: `${imageAspectRatio}` };
+    } 
+    // If image is taller relative to container => constrain height
+    else {
+      return { height: '100%', width: 'auto', aspectRatio: `${imageAspectRatio}` };
+    }
+  };
+
   return (
     <div className="w-full max-w-4xl mx-auto mt-6 animate-fade-in">
       <div className="bg-white dark:bg-slate-800 rounded-[24px] shadow-xl border border-gray-100 dark:border-slate-700 overflow-hidden transition-colors duration-300">
@@ -74,13 +247,13 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
         {/* Header */}
         <div className="p-4 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between bg-gray-50/50 dark:bg-slate-900/50 transition-colors duration-300">
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-xl transition-colors duration-300 ${isValidAnalysis === false ? 'bg-red-50 text-red-500 dark:bg-red-900/30 dark:text-red-400' : 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400'}`}>
+            <div className={`p-2 rounded-xl transition-colors duration-300 ${isValidAnalysis === false && !isLoading ? 'bg-red-50 text-red-500 dark:bg-red-900/30 dark:text-red-400' : 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400'}`}>
               <ScanFace size={20} />
             </div>
             <div>
               <h3 className="font-bold text-gray-800 dark:text-white transition-colors duration-300">Skin Zone Map</h3>
               <p className="text-xs text-gray-500 dark:text-gray-400 transition-colors duration-300">
-                {isValidAnalysis === false ? "Analysis unavailable" : "Tap regions for lifestyle insights"}
+                {isLoading ? "Analyzing angles..." : isValidAnalysis === false ? "Analysis unavailable" : "Tap regions for lifestyle insights"}
               </p>
             </div>
           </div>
@@ -92,67 +265,87 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
         <div className="flex flex-col md:flex-row">
           
           {/* Visual Map Area */}
-          <div className="relative w-full md:w-1/2 bg-gray-900 aspect-[4/5] md:aspect-square flex items-center justify-center overflow-hidden group select-none">
-            {loading ? (
-              <div className="flex flex-col items-center gap-4 text-white/80">
-                <Loader2 size={32} className="animate-spin text-indigo-400" />
-                <span className="text-sm font-medium">Scanning facial zones...</span>
-              </div>
-            ) : error ? (
-              <div className="text-center p-6 text-white/80 max-w-xs">
-                <AlertCircle size={32} className="mx-auto mb-2 text-red-400" />
-                <p className="text-sm">{error}</p>
-              </div>
-            ) : isValidAnalysis === false ? (
-               /* INVALID IMAGE STATE - VISUAL */
-               <>
-                 <img 
-                   src={image} 
-                   alt="Face Map" 
-                   className="w-full h-full object-cover opacity-40 blur-[2px]"
-                 />
-                 <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
-                    <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4 border border-red-500/50 backdrop-blur-md">
-                       <ShieldAlert size={32} className="text-red-200" />
-                    </div>
-                    <h3 className="text-white font-bold text-lg mb-2">Zone Map Unavailable</h3>
-                    <p className="text-white/70 text-sm">{data?.errorReason || "Face not clearly visible"}</p>
-                 </div>
-               </>
-            ) : (
-              /* VALID MAP STATE */
-              <>
-                <img 
-                  ref={imgRef}
-                  src={image} 
-                  alt="Face Map" 
-                  className="w-full h-full object-cover opacity-80 group-hover:opacity-60 transition-opacity duration-500"
-                />
-                
-                {/* Overlay Zones */}
-                {data?.zones.map((zone) => (
-                  <div
-                    key={zone.id}
-                    onClick={() => setSelectedZoneId(zone.id)}
-                    className={`absolute border-2 rounded-2xl cursor-pointer transition-all duration-300 hover:bg-white/10 hover:border-white hover:scale-[1.02] backdrop-blur-[1px]
-                      ${selectedZoneId === zone.id ? 'bg-white/20 border-white shadow-[0_0_15px_rgba(255,255,255,0.5)] z-10' : getSeverityColor(zone.severity)}
+          <div className="relative w-full md:w-1/2 bg-gray-900 aspect-[4/5] md:aspect-square flex flex-col items-center justify-center overflow-hidden group select-none">
+            
+            {/* Image Switcher (Smartly Filtered) */}
+            {images.length > 1 && !isLoading && relevantIndices.length > 1 && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex gap-2 bg-black/40 backdrop-blur-md p-1.5 rounded-full border border-white/10">
+                {relevantIndices.map((imgIdx) => (
+                  <button
+                    key={imgIdx}
+                    onClick={() => setSelectedIndex(imgIdx)}
+                    className={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center transition-all
+                      ${selectedIndex === imgIdx 
+                        ? 'bg-white text-gray-900 shadow-md scale-105' 
+                        : 'bg-white/20 text-white hover:bg-white/40'}
                     `}
-                    style={getStyle(zone.box_2d)}
+                    title={`View Image ${imgIdx + 1}`}
                   >
-                    {/* Floating Label (Visible on Hover/Select) */}
-                    <div className={`absolute -top-3 left-1/2 -translate-x-1/2 bg-gray-900/90 text-white text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap opacity-0 transition-opacity pointer-events-none
-                       ${selectedZoneId === zone.id ? 'opacity-100' : 'group-hover:opacity-100'}
-                    `}>
-                      {zone.label}
-                    </div>
-                  </div>
+                    {imgIdx + 1}
+                  </button>
                 ))}
-              </>
+              </div>
             )}
 
-            {/* Hint Overlay (Only for valid state) */}
-            {!loading && !error && isValidAnalysis !== false && !selectedZoneId && (
-               <div className="absolute bottom-4 inset-x-0 text-center pointer-events-none">
+            <div ref={containerRef} className="w-full h-full relative flex items-center justify-center">
+              {isLoading ? (
+                <div className="flex flex-col items-center gap-4 text-white/80">
+                  <Loader2 size={32} className="animate-spin text-indigo-400" />
+                  <span className="text-sm font-medium">Scanning all angles...</span>
+                </div>
+              ) : error ? (
+                <div className="text-center p-6 text-white/80 max-w-xs">
+                  <AlertCircle size={32} className="mx-auto mb-2 text-red-400" />
+                  <p className="text-sm">{error}</p>
+                </div>
+              ) : (
+                /* ACCURATE POSITIONING WRAPPER */
+                <div 
+                  className="relative transition-all duration-300"
+                  style={getWrapperStyle()}
+                >
+                  <img 
+                    src={currentImage} 
+                    alt="Face Map" 
+                    onLoad={handleImageLoad}
+                    className={`w-full h-full object-contain transition-opacity duration-500 ${isValidAnalysis === false ? 'opacity-40 blur-[2px]' : 'opacity-100'}`}
+                  />
+
+                  {isValidAnalysis === false ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-20">
+                      <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4 border border-red-500/50 backdrop-blur-md">
+                         <ShieldAlert size={32} className="text-red-200" />
+                      </div>
+                      <h3 className="text-white font-bold text-lg mb-2">Zone Map Unavailable</h3>
+                      <p className="text-white/70 text-sm">{currentData?.errorReason || "Face not clearly visible"}</p>
+                    </div>
+                  ) : (
+                    /* ZONE OVERLAYS */
+                    currentData?.zones.map((zone) => (
+                      <div
+                        key={zone.id}
+                        onClick={() => setSelectedZoneId(zone.id)}
+                        className={`absolute border-2 rounded-2xl cursor-pointer transition-all duration-300 hover:bg-white/10 hover:border-white hover:scale-[1.02] backdrop-blur-[1px]
+                          ${selectedZoneId === zone.id ? 'bg-white/20 border-white shadow-[0_0_15px_rgba(255,255,255,0.5)] z-10' : getSeverityColor(zone.severity)}
+                        `}
+                        style={getStyle(zone.box_2d)}
+                      >
+                        {/* Floating Label */}
+                        <div className={`absolute -top-3 left-1/2 -translate-x-1/2 bg-gray-900/90 text-white text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap opacity-0 transition-opacity pointer-events-none
+                           ${selectedZoneId === zone.id ? 'opacity-100' : 'group-hover:opacity-100'}
+                        `}>
+                          {zone.label}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Hint Overlay */}
+            {!isLoading && !error && isValidAnalysis !== false && !selectedZoneId && (
+               <div className="absolute bottom-4 inset-x-0 text-center pointer-events-none z-20">
                  <span className="bg-black/60 text-white text-xs px-3 py-1.5 rounded-full backdrop-blur-md">
                    Tap any highlighted zone
                  </span>
@@ -162,7 +355,7 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
 
           {/* Insights Panel */}
           <div className="flex-1 p-6 bg-white dark:bg-slate-800 flex flex-col min-h-[300px] transition-colors duration-300">
-            {isValidAnalysis === false ? (
+            {isValidAnalysis === false && !isLoading ? (
                /* INVALID IMAGE STATE - INFO PANEL */
                <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
                   <h4 className="text-gray-900 dark:text-white font-bold text-lg mb-4">Detection Tips</h4>
@@ -171,7 +364,7 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
                     <div className="flex gap-3">
                        <AlertCircle size={20} className="text-orange-500 flex-shrink-0 mt-0.5" />
                        <div className="text-sm text-orange-800 dark:text-orange-200 leading-relaxed">
-                         {data?.overall_summary || "We couldn't clearly detect a face in this image. Please try a clearer, front-facing photo."}
+                         {currentData?.overall_summary || "We couldn't clearly detect a face in this image. Please try a clearer, front-facing photo."}
                        </div>
                     </div>
                   </div>
@@ -186,7 +379,7 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
                      </ul>
                   </div>
                </div>
-            ) : selectedZone ? (
+            ) : selectedZone && !isLoading ? (
               <div className="flex-1 animate-fade-in-scale">
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="text-xl font-bold text-gray-800 dark:text-white">{selectedZone.label}</h4>
@@ -225,29 +418,36 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ image, facts, isOpen, 
             ) : (
               // Default "All Zones" View
               <div className="flex-1 flex flex-col">
-                <h4 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <ArrowRightLeft size={14} /> Zone Summary
-                </h4>
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                    <ArrowRightLeft size={14} /> Zone Summary
+                  </h4>
+                  {images.length > 1 && !isLoading && (
+                    <span className="text-[10px] font-medium bg-gray-100 dark:bg-slate-700 px-2 py-0.5 rounded text-gray-500">
+                      Image {selectedIndex + 1} of {images.length}
+                    </span>
+                  )}
+                </div>
                 
-                {loading ? (
+                {isLoading ? (
                   <div className="flex-1 space-y-3">
                     {[1,2,3].map(i => <div key={i} className="h-16 bg-gray-50 dark:bg-slate-700 rounded-xl animate-pulse" />)}
                   </div>
-                ) : data ? (
+                ) : currentData ? (
                   <>
                     {/* Overall Summary Block */}
-                    {data.overall_summary && (
+                    {currentData.overall_summary && (
                       <div className="mb-4 p-4 bg-teal-50/50 dark:bg-teal-900/20 rounded-xl border border-teal-100 dark:border-teal-900/30 text-sm text-teal-800 dark:text-teal-200 leading-relaxed transition-colors duration-300">
                          <div className="flex items-center gap-2 mb-2 text-teal-600 dark:text-teal-400 font-bold text-xs uppercase tracking-wider">
                            <Sparkles size={14} /> Analysis Summary
                          </div>
-                         {data.overall_summary}
+                         {currentData.overall_summary}
                       </div>
                     )}
 
                     {/* Zone List */}
                     <div className="space-y-2 overflow-y-auto max-h-[320px] pr-1 custom-scrollbar">
-                      {data.zones.map(zone => (
+                      {currentData.zones.map(zone => (
                         <button
                           key={zone.id}
                           onClick={() => setSelectedZoneId(zone.id)}

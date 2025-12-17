@@ -238,35 +238,56 @@ const ensureSeverityScore = (result: AnalysisResult) => {
 
 export const analyzeHealthQuery = async (
   text: string,
-  base64Image?: string,
+  base64Images: string[] = [],
   userProfile?: UserProfile,
   mimeType: string = "image/jpeg"
 ): Promise<AnalysisResult> => {
   try {
-    let normalizedImage = base64Image;
-    let imgHash: string | null = null;
+    let normalizedImages: string[] = [];
+    let combinedHash: string | null = null;
 
-    // --- STEP 1: Normalize & Hash Image (Deterministic Cache Key) ---
-    if (base64Image) {
+    // --- STEP 1: Normalize & Hash Images (Deterministic Cache Key) ---
+    if (base64Images.length > 0) {
       try {
-        normalizedImage = await normalizeImage(base64Image);
-        imgHash = await generateImageHash(normalizedImage);
+        const hashParts: string[] = [];
+        for (const img of base64Images) {
+          const norm = await normalizeImage(img);
+          normalizedImages.push(norm);
+          const hash = await generateImageHash(norm);
+          hashParts.push(hash);
+        }
+        
+        // Combine hashes to create a unique key for this combination of images
+        combinedHash = hashParts.join('_');
         
         // --- STEP 2: Check Cache ---
-        const cachedResult = getCachedAnalysis(imgHash);
+        const cachedResult = getCachedAnalysis(combinedHash);
         if (cachedResult) {
-          console.log(`[Cache Hit] Using cached analysis for hash: ${imgHash.substring(0,8)}`);
+          console.log(`[Cache Hit] Using cached analysis for hash: ${combinedHash.substring(0,8)}`);
           return cachedResult;
         }
       } catch (e) {
-        console.warn("Image normalization/cashing failed, proceeding with raw image.", e);
+        console.warn("Image normalization/caching failed, proceeding with raw images.", e);
         // Fallback to raw if normalization fails
-        normalizedImage = base64Image;
+        normalizedImages = base64Images;
       }
     }
 
     // Construct text prompt with user profile if available
     let promptText = text || "Analyze this for health insights.";
+    
+    // Append multi-image specific prompt instructions if applicable
+    if (normalizedImages.length > 1) {
+      promptText += `\n\n[MULTI-IMAGE ANALYSIS DETECTED: ${normalizedImages.length} IMAGES]
+      You are analyzing a single case with multiple views/angles.
+      
+      STRICT REQUIREMENT: Use the extra visual data to improve accuracy.
+      1. Cross-reference observations across images (e.g. 'Image 1 shows the left cheek, Image 2 shows the right').
+      2. If findings align across images, increase confidence.
+      3. If they differ (e.g. one side is worse), explicitly note the asymmetry.
+      4. Synthesize a single 'Overall Case Summary'.
+      `;
+    }
     
     if (userProfile && (userProfile.conditions || userProfile.allergies || userProfile.history)) {
       promptText += `\n\n[USER MEDICAL PROFILE START]\n`;
@@ -278,12 +299,13 @@ export const analyzeHealthQuery = async (
 
     const parts: any[] = [{ text: promptText }];
 
-    if (normalizedImage) {
-      // Remove data URL prefix if present (normalized image usually has it)
-      const base64Data = normalizedImage.split(",")[1] || normalizedImage;
+    // Add all images to the request
+    for (const img of normalizedImages) {
+      // Remove data URL prefix if present
+      const base64Data = img.split(",")[1] || img;
       parts.push({
         inlineData: {
-          mimeType: mimeType, // Normalized is always jpeg, but keeping generic if fallback used
+          mimeType: mimeType, 
           data: base64Data,
         },
       });
@@ -298,7 +320,7 @@ export const analyzeHealthQuery = async (
         systemInstruction: `DETERMINISTIC OUTPUT MANDATE — LifeLens
 
 You are LifeLens. Your priority is MAXIMUM ACCURACY, TRANSPARENCY, and SAFETY.
-You must output consistent, repeatable analysis for the same image.
+You must output consistent, repeatable analysis.
 
 Do NOT change the JSON output structure. Always return results in this exact format:
 {
@@ -312,51 +334,37 @@ Do NOT change the JSON output structure. Always return results in this exact for
 
 Strict Rules for Deterministic Output:
 
-1. Deterministic Facts:
+1. Deterministic Facts & Multi-Image Handling:
    - Produce facts strictly from directly observable image elements.
-   - Use deterministic phrasing and ordering (e.g., list top-to-bottom or most prominent to least prominent).
-   - Do NOT include timestamps, session IDs, or random variable content in facts.
+   - For MULTI-IMAGE INPUTS, structure the 'facts' card content exactly as follows:
+     1. "Overall Case Summary": Synthesized view.
+     2. "Per-Image Observations": Brief bullet points for Image 1, Image 2, etc.
+     3. "Cross-Image Insights": Patterns, symmetry, or progression.
+     4. "SeverityScore: N" (MANDATORY, 1-10 scale).
+     5. "Confidence Level" (High/Medium/Low based on image clarity).
 
 2. Deterministic Severity (MANDATORY):
-   - You MUST include a "SeverityScore: N" line in the 'facts' card content, where N is an integer from 1 to 10.
-     - 1-3: Mild (Minor discoloration, few small lesions, dry skin)
-     - 4-6: Moderate (Visible inflammation, multiple lesions, clear redness)
-     - 7-10: Severe (Deep inflammation, widespread infection, urgent care needed)
+   - You MUST include a "SeverityScore: N" line in the 'facts' card content.
+     - 1-3: Mild
+     - 4-6: Moderate
+     - 7-10: Severe
    - Example line: "SeverityScore: 5"
 
 3. No Randomness:
    - Do not use words implying uncertainty (e.g., "perhaps") as primary claims.
-   - Uncertainty must only appear in the "Evidence confidence" line.
 
 4. Observable Metrics:
    - Include measurable estimates (count, area %) with the method used.
-   - Example: "Estimated lesion count: ~8 (visual count)."
 
-5. Low Quality Images:
-   - If image is blurry/dark, still emit a conservative SeverityScore based on what IS visible, but mark "Evidence confidence: LOW" and suggest retake.
-
-Analysis Procedure:
-
-Pass 1 — Visible Evidence Extraction
-1. Describe observable elements using short numbered lines. Label as "Observable:".
-2. Add the SeverityScore line.
-3. Add the Evidence confidence line.
-   - Example Facts Content:
-     "1) Observable: Erythema on right cheek covering ~10% area.
-      2) Observable: 5-8 small papules on forehead.
-      SeverityScore: 4
-      Evidence confidence: MEDIUM — slight blur on jawline."
-
-Pass 2 — Advice & Routine
-1. Tie every advice item to an Observable fact.
-2. Be actionable and safe. Use "consider", "may help".
+5. Safe Recommendations (Advice Card):
+   - Include "Safe Recommendations" section in the 'advice' card.
+   - Suggest general care, non-harmful home remedies, and SAFE OTC medicine (Benzoyl Peroxide 2.5%, Salicylic Acid 1%, etc.).
+   - NO PRESCRIPTIONS.
 
 Safety:
-- Append this exact line at the end of every response (after JSON generation logic handles it, ensure it's conceptually part of the output content where appropriate or handled by UI, but for this JSON task, ensure the content strings are safe):
+- Append this exact line at the end of every response content string:
   "I am an AI assistant, not a medical professional. Please consult a doctor for medical advice."
-  (Include this in the content strings of advice/routine cards).
-
-Follow these rules strictly.`,
+`,
       },
     });
 
@@ -369,8 +377,8 @@ Follow these rules strictly.`,
     // --- STEP 3: Deterministic Fallback & Cache Store ---
     ensureSeverityScore(result);
 
-    if (imgHash) {
-      cacheAnalysis(imgHash, result);
+    if (combinedHash) {
+      cacheAnalysis(combinedHash, result);
     }
 
     return result;

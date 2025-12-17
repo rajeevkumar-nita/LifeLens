@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { HistoryItem } from '../types';
 import { 
@@ -173,17 +172,30 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                 <p className="font-medium">No recent scans</p>
               </div>
             ) : (
-              history.map((item) => (
+              history.map((item) => {
+                // Determine which images to show
+                const images = item.imageUrls || (item.imageUrl ? [item.imageUrl] : []);
+                
+                return (
                 <div 
                   key={item.id}
                   onClick={() => onSelect(item)}
                   className="bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 rounded-2xl p-4 hover:shadow-lg hover:border-teal-100 dark:hover:border-teal-900 cursor-pointer transition-all duration-300 group relative overflow-hidden"
                 >
                   <div className="flex gap-4 items-start">
-                    {item.imageUrl ? (
-                      <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-100 dark:bg-slate-700 flex-shrink-0 border border-gray-100 dark:border-slate-700 shadow-sm">
-                        <img src={item.imageUrl} alt="scan" className="w-full h-full object-cover" />
-                      </div>
+                    {images.length > 0 ? (
+                       // If multiple images, show a small grid or just the first with a badge
+                       images.length === 1 ? (
+                         <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-100 dark:bg-slate-700 flex-shrink-0 border border-gray-100 dark:border-slate-700 shadow-sm">
+                           <img src={images[0]} alt="scan" className="w-full h-full object-cover" />
+                         </div>
+                       ) : (
+                         <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-100 dark:bg-slate-700 flex-shrink-0 border border-gray-100 dark:border-slate-700 shadow-sm grid grid-cols-2 gap-0.5">
+                            {images.slice(0, 4).map((img, i) => (
+                              <img key={i} src={img} alt={`scan ${i}`} className="w-full h-full object-cover" />
+                            ))}
+                         </div>
+                       )
                     ) : (
                       <div className="w-16 h-16 rounded-xl bg-teal-50/50 dark:bg-teal-900/30 flex items-center justify-center flex-shrink-0 text-teal-400 border border-teal-50 dark:border-teal-900">
                         <ImageIcon size={24} />
@@ -205,7 +217,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                         </span>
                       </div>
                       <p className="text-sm font-bold text-gray-800 dark:text-gray-200 truncate leading-tight">
-                        {item.query || "Image Analysis"}
+                        {item.query || (images.length > 1 ? `${images.length} Images Analysis` : "Image Analysis")}
                       </p>
                       <p className="text-xs text-gray-400 mt-1">
                         {new Date(item.timestamp).toLocaleDateString()}
@@ -229,7 +241,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                     </div>
                   </div>
                 </div>
-              ))
+              )})
             )}
           </div>
         </div>
