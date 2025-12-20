@@ -397,7 +397,7 @@ export const SkinZoneMap: React.FC<SkinZoneMapProps> = ({ images, facts, isOpen,
                   </div>
 
                   <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-xl border border-indigo-100 dark:border-indigo-900/30 transition-colors duration-300">
-                    <span className="text-xs font-bold text-indigo-400 dark:text-indigo-400 uppercase tracking-wider block mb-1 flex items-center gap-1">
+                    <span className="text-xs font-bold text-indigo-400 dark:text-indigo-400 uppercase tracking-widermb-1 flex items-center gap-1">
                       <Info size={12} /> Potential Factors
                     </span>
                     <p className="text-indigo-900 dark:text-indigo-200 text-sm leading-relaxed">

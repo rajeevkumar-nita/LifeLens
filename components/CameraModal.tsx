@@ -170,7 +170,7 @@ export const CameraModal: React.FC<CameraModalProps> = ({ isOpen, onClose, onCap
               <div className="p-6 rounded-full bg-teal-500 text-white shadow-lg shadow-teal-500/40">
                 <Check size={32} strokeWidth={3} />
               </div>
-              <span className="text-xs font-medium font-bold">Use Photo</span>
+              <span className="text-xs font-bold">Use Photo</span>
             </button>
           </>
         ) : (
