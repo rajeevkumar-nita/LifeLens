@@ -1,4 +1,4 @@
-<!-- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -138,78 +138,4 @@
     <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>
-</html> -->
-
-
-
-
-
-
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <script type="module">
-      import RefreshRuntime from "/@react-refresh"
-      RefreshRuntime.injectIntoGlobalHook(window)
-      window.$RefreshReg$ = () => {}
-      window.$RefreshSig$ = () => (type) => type
-      window.__reactRefreshLog = () => {}
-    </script>
-
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LifeLens - Health & Lifestyle AI</title>
-    
-    <link rel="icon" type="image/png" href="/favicon.png" />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/index.css">
-
-    <style>
-      :root {
-        --bg-app: #f0fdfa;
-        --bg-card: #ffffff;
-        --bg-modal: rgba(255, 255, 255, 0.9);
-        --text-primary: #1f2937;
-        --text-secondary: #4b5563;
-        --border-color: #f3f4f6;
-        --accent-glow: rgba(20, 184, 166, 0.2);
-      }
-      .dark {
-        --bg-app: #0f172a;
-        --bg-card: #1e293b;
-        --bg-modal: rgba(30, 41, 59, 0.9);
-        --text-primary: #f8fafc;
-        --text-secondary: #94a3b8;
-        --border-color: #334155;
-        --accent-glow: rgba(20, 184, 166, 0.15);
-      }
-      body {
-        font-family: 'Inter', sans-serif;
-        background-color: var(--bg-app);
-        color: var(--text-primary);
-        -webkit-font-smoothing: antialiased;
-        transition: background-color 0.3s ease;
-      }
-      /* Animations */
-      @keyframes loaderSpin { to { transform: rotate(360deg); } }
-      .animate-loader-spin { animation: loaderSpin 1s linear infinite; }
-      /* Baaki styles browser auto-load kar lega index.css se */
-    </style>
-
-    <script type="importmap">
-    {
-      "imports": {
-        "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
-        "react/": "https://aistudiocdn.com/react@^19.2.1/",
-        "react": "https://aistudiocdn.com/react@^19.2.1",
-        "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0",
-        "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0"
-      }
-    }
-    </script>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
-  </body>
 </html>
