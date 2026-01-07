@@ -171,7 +171,10 @@ npm install
 ```
 
 ### Create a .env.local file:
+
+```bash
 GEMINI_API_KEY=your_gemini_api_key
+```
 
 ### Run the app:
 ```bash
