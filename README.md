@@ -79,7 +79,7 @@ Instead, it is built to:
 ---
 
 ## 📁 Project Structure
-
+```bash
 src/
 ├── components/
 │ ├── CameraModal.tsx
@@ -111,7 +111,7 @@ src/
 ├── index.css
 └── metadata.json
 
-
+```
 
 ---
 
