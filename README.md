@@ -78,6 +78,50 @@ Instead, it is built to:
 
 ---
 
+### 🛠️ System Architecture
+
+```mermaid
+graph TD
+    subgraph User Device
+        U[User]
+        UI[React UI]
+        LP[(Local Medical Profile)]
+    end
+
+    subgraph "Frontend (Vite + React)"
+        UI --> CM[Camera & Image Upload]
+        UI --> ST[Symptom Tracker]
+        UI --> TP[Treatment Planner]
+        UI --> TR[Trigger Detection]
+    end
+
+    subgraph "AI Layer (Gemini API)"
+        AI[Multimodal AI Engine]
+    end
+
+    subgraph "Client Services"
+        IMG[Image Utils]
+        CACHE[Local Cache Service]
+        AI_SVC[Gemini Service]
+    end
+
+    U --> UI
+    CM --> IMG
+    IMG --> AI_SVC
+    AI_SVC --> AI
+
+    LP --> UI
+    LP --> AI_SVC
+
+    AI --> AI_SVC
+    AI_SVC --> CACHE
+    CACHE --> UI
+
+    ST --> UI
+    TP --> UI
+    TR --> UI
+```
+
 ## 📁 Project Structure
 ```bash
 src/
